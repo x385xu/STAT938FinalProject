@@ -1,0 +1,84 @@
+---
+title: "florida_analysis_draft"
+author: "Xinlei Xu"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(changepoint)
+```
+
+```{r}
+fl <- readRDS("fl_statewide.rds")
+glimpse(fl)
+```
+
+# Q5
+Change it to time series
+```{r}
+fl_ts <- fl %>%
+  mutate(month = lubridate::floor_date(date, "month")) %>%
+  group_by(month) %>%
+  summarize(
+    total_stops      = n(),
+    nonwhite_stops   = sum(subject_race != "white", na.rm=TRUE),
+    prop_nonwhite    = nonwhite_stops / total_stops
+  ) %>%
+  arrange(month)
+```
+
+## Total number of stops
+```{r}
+fl_ts_long <- fl_ts %>%
+  select(month, total_stops, nonwhite_stops) %>%
+  pivot_longer(
+    cols = c(total_stops, nonwhite_stops),
+    names_to = "stop_type",
+    values_to = "count")
+
+ggplot(fl_ts_long, aes(x = month, y = count, color = stop_type)) + 
+  geom_line(size = 1) + 
+  labs(x      = "Month",
+       y      = "Number of Stops",
+       color  = "Stop category",
+       title  = "Monthly Total vs. Non-white Stops") +
+  scale_color_manual(
+    values = c("total_stops" = "steelblue", 
+               "nonwhite_stops" = "firebrick"),
+    labels = c("All stops", "Non-white stops")) +
+  theme_minimal()
+
+```
+
+## Change point Dectection
+```{r}
+ts_vec <- fl_ts$total_stops
+
+cpt <- cpt.meanvar(ts_vec, method = "PELT",
+                   penalty = "BIC", test.stat = "Normal")
+
+idx_cpt <- cpts(cpt)
+param.est(cpt) # estimated mean/variance per segment
+
+cpt_month <- fl_ts$month[idx_cpt]
+cpt_month
+```
+```{r}
+plot(cpt, cpt.col="blue", main = "Change-point of Total Stops")
+```
+
+
+
+
+
+```{r}
+ggplot(fl_ts, aes(x=month, y=prop_nonwhite)) +
+  geom_line() +
+  # locally weighted regression
+  #geom_smooth(method="loess", span=0.3) +
+  labs(y="Proportion non-white stops")
+```
