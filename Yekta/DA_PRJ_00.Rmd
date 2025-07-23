@@ -1,0 +1,666 @@
+```{r envSetup, include = FALSE, echo = FALSE}
+knitr::opts_chunk$set(
+    echo = TRUE,
+    message = FALSE,
+    warning = FALSE,
+    out.width = "65%",
+    fig.align = "center",
+    comment = ">"
+    )
+```
+
+
+
+```{r, include = FALSE, echo = FALSE}
+#library(tidyverse)
+library(corrr)
+library(psych)
+library(lavaan)
+#library(kableExtra)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(survey)
+library(haven)
+library(rempsyc)
+library(broom)
+library(report)
+library(effectsize)
+library(aod)
+library(readr)
+#library(tidymodels)
+library(stargazer)
+library(forcats)
+library(ggcorrplot)
+library(caret)
+library(knitr)
+library(ROCR)
+library(jtools)
+#=library(car)
+library(xtable)
+#library(texreg)
+#library(svyVGAM)
+library(glmnet)
+library(ggpubr)
+library(lme4)
+library(nlme)
+library(weights)
+library(miscTools)
+library(systemfit)
+library(multcomp)
+require(ggplot2)
+require(GGally)
+require(reshape2)
+#require(compiler)
+#require(parallel)
+#require(boot)
+require(lattice)
+library(HLMdiag)
+#library(DHARMa)
+library(car) #for the Levene test which we will not discuss here
+library(Matrix)
+library(brms)
+library(margins)
+library(performance)
+library(ggnewscale)
+library(ggeffects)
+library(bayestestR) # for hypothesis testing
+library(brmsmargins)
+library(ggeffects)
+library(marginaleffects)
+library(effects)
+library(margins)
+library(modelr)
+library(plm)
+library(effectsize)
+library(aod)
+library(readr)
+library(tidymodels)
+library(stargazer)
+library(forcats)
+library(ggcorrplot)
+library(caret)
+library(knitr)
+library(ROCR)
+library(jtools)
+#=library(car)
+library(xtable)
+#library(texreg)
+#library(svyVGAM)
+library(glmnet)
+library(ggpubr)
+library(foreign)
+library(AER)
+library(lme4)
+library(brms)
+library(glmnet)
+library(ggpubr)
+library(formatR)
+library(pglm)
+library(acqr)
+library(readr)
+library(tidymodels)
+library(foreign)
+library(NLP)
+library(tm) # text mining 
+library(tidytext) # text analysis 
+#library(janeaustenr)
+library(stringr)
+library(igraph) # manipulating and analyzing networks
+library(ggraph)
+library(igraph)
+library(widyr)
+#library(tm.plugin.webmining)
+library(purrr)
+library(topicmodels)
+library(scales)
+#library(mallet) 
+library(cld2)
+library(readxl)
+library(reshape2)
+library(pheatmap)
+library(stopwords)
+library(gridExtra)
+library(grid)
+library(reshape2)
+library(igraph)
+library(treemapify)
+library(networkD3)
+library(tidyr)
+library(ggeffects)
+library(sandwich)
+library(lmtest)
+library(pscl)
+library(texreg)
+library(geepack)
+```
+
+
+```{r}
+
+#df_00_wa <- readRDS("wa_statewide.rds")
+#df_00_alb <- readRDS("albany.rds")
+#df_00_ca <- readRDS("ca_statewide.rds")
+#df_00_chi <- readRDS("chicago.rds")
+df_00_fl <- readRDS("fl_statewide.rds")
+#df_00_NY <- readRDS("ny_statewide.rds")
+#df_00_LA <- readRDS("los_angeles.rds")
+#df_00_SND <- readRDS("san_diego.rds")
+#df_00_SF <- readRDS("san_francisco.rds")
+#df_00_SEAT <- readRDS("seattle.rds")
+#df_00_ILL <- readRDS("il_statewide.rds")
+
+
+```
+
+
+```{r}
+colnames(df_00_wa)
+```
+
+```{r}
+colnames(df_00_alb)
+```
+
+```{r}
+
+colnames(df_00_ca)
+```
+
+```{r}
+colnames(df_00_chi)
+
+```
+
+
+```{r}
+colnames(df_00_fl)
+```
+
+
+```{r}
+#colnames(df_00_NY)
+```
+
+
+```{r}
+#colnames(df_00_LA)
+```
+
+
+```{r}
+#colnames(df_00_SND)
+```
+
+
+```{r}
+#colnames(df_00_SF)
+```
+
+
+```{r}
+#colnames(df_00_SEAT)
+```
+
+```{r}
+#colnames(df_00_ILL)
+
+```
+The only ones that have the search_conducted are: 
+- df_00_ILL
+- df_00_SF
+- df_00_ca
+- df_00_SND
+- df_00_fl
+- df_00_wa
+
+```{r}
+main_df <- df_00_fl
+df <- main_df
+```
+
+
+```{r}
+glimpse(df)
+```
+
+
+```{r}
+df %>% filter(!is.na(reason_for_search)) %>% dplyr::select(reason_for_search)
+```
+
+```{r}
+df2 <- df %>% dplyr::select(date, time, location, county_name, department_name, subject_age, subject_race, 
+                            subject_sex, officer_age, officer_race, officer_sex, officer_years_of_service, type, violation, arrest_made, outcome, search_conducted)
+```
+
+```{r}
+dim(df2)
+```
+
+```{r}
+df2_no_na <- df2 %>% filter(if_all(everything(), ~ !is.na(.)))
+
+```
+
+```{r}
+dim(df2_no_na)
+```
+```{r}
+df2_clean <- df2_no_na
+```
+
+
+```{r}
+describe_df <- psych::describe(df2_clean %>% dplyr::select(where(is.numeric)))
+
+```
+
+```{r}
+describe_df_unclean <- psych::describe(df2 %>% dplyr::select(where(is.numeric)))
+
+```
+
+```{r}
+as.data.frame(describe_df) %>% dplyr::select(n, mean, sd, median, min, max, skew)
+```
+
+
+
+
+
+```{r}
+xtable(as.data.frame(describe_df_unclean))
+```
+
+```{r}
+categorical_summary <- function(data) {
+  data %>%
+    dplyr::select(where(~ is.factor(.) || is.character(.))) %>%
+    purrr::map_dfr(
+      ~ as.data.frame(table(.x, useNA = "ifany")) %>%
+        dplyr::mutate(Percent = round(100 * Freq / sum(Freq), 2)),
+      .id = "Variable"
+    )
+}
+
+```
+
+
+```{r}
+paste("Number of unique dates in dataset are ", n_distinct(df2$date), ".")
+paste("Number of unique times in dataset are ", n_distinct(df2$time), ".")
+paste("Number of unique locations in dataset are ", n_distinct(df2$location), ".")
+paste("Number of unique counties in dataset are ", n_distinct(df2$county_name), ".")
+paste("Number of unique departments in dataset are ", n_distinct(df2$department_name), ".")
+paste("Number of unique subject ages in dataset are ", n_distinct(df2$subject_age), ".")
+paste("Number of unique subject races in dataset are ", n_distinct(df2$subject_race), ".")
+paste("Number of unique subject genders in dataset are ", n_distinct(df2$subject_sex), ".")
+paste("Number of unique officer ages in dataset are ", n_distinct(df2$officer_age), ".")
+paste("Number of unique officer races in dataset are ", n_distinct(df2$officer_race), ".")
+paste("Number of unique officer genders in dataset are ", n_distinct(df2$officer_sex), ".")
+paste("Number of unique officer years of service in dataset are ", n_distinct(df2$officer_years_of_service), ".")
+paste("Number of unique types of stop in dataset are ", n_distinct(df2$type), ".")
+paste("Number of unique violation in dataset are ", n_distinct(df2$violation), ".")
+paste("Number of unique arrest results in dataset are ", n_distinct(df2$arrest_made), ".")
+paste("Number of unique outcomes in dataset are ", n_distinct(df2$outcome), ".")
+paste("Number of unique search binary in dataset are ", n_distinct(df2$search_conducted), ".")
+
+
+```
+```{r}
+paste("Number of unique dates in dataset are ", n_distinct(df2_clean$date), ".")
+paste("Number of unique times in dataset are ", n_distinct(df2_clean$time), ".")
+paste("Number of unique locations in dataset are ", n_distinct(df2_clean$location), ".")
+paste("Number of unique counties in dataset are ", n_distinct(df2_clean$county_name), ".")
+paste("Number of unique departments in dataset are ", n_distinct(df2_clean$department_name), ".")
+paste("Number of unique subject ages in dataset are ", n_distinct(df2_clean$subject_age), ".")
+paste("Number of unique subject races in dataset are ", n_distinct(df2_clean$subject_race), ".")
+paste("Number of unique subject genders in dataset are ", n_distinct(df2_clean$subject_sex), ".")
+paste("Number of unique officer ages in dataset are ", n_distinct(df2_clean$officer_age), ".")
+paste("Number of unique officer races in dataset are ", n_distinct(df2_clean$officer_race), ".")
+paste("Number of unique officer genders in dataset are ", n_distinct(df2_clean$officer_sex), ".")
+paste("Number of unique officer years of service in dataset are ", n_distinct(df2_clean$officer_years_of_service), ".")
+paste("Number of unique types of stop in dataset are ", n_distinct(df2_clean$type), ".")
+paste("Number of unique violation in dataset are ", n_distinct(df2_clean$violation), ".")
+paste("Number of unique arrest results in dataset are ", n_distinct(df2_clean$arrest_made), ".")
+paste("Number of unique outcomes in dataset are ", n_distinct(df2_clean$outcome), ".")
+paste("Number of unique search binary in dataset are ", n_distinct(df2_clean$search_conducted), ".")
+
+```
+
+```{r}
+df3 <- df2_clean %>% dplyr::select(subject_race, department_name, subject_sex, officer_race, officer_sex, arrest_made, outcome, search_conducted)
+```
+
+```{r}
+xtable(categorical_summary(df3))
+```
+
+```{r}
+time_summary <- function(data) {
+  data %>%
+    dplyr::select(where(~ inherits(., "Date") || inherits(., "POSIXct"))) %>%
+    purrr::imap_dfr(~ {
+      tibble::tibble(
+        Variable = .y,
+        Min = min(.x, na.rm = TRUE),
+        Max = max(.x, na.rm = TRUE),
+        Range = difftime(max(.x, na.rm = TRUE), min(.x, na.rm = TRUE), units = "days"),
+        Missing = sum(is.na(.x)),
+        Total = length(.x)
+      )
+    })
+}
+
+```
+
+```{r}
+summary_date <- tibble::tibble(
+  Min = min(df2_clean$date, na.rm = TRUE),
+  Max = max(df2_clean$date, na.rm = TRUE),
+  Range = difftime(max(df2_clean$date, na.rm = TRUE), min(df2_clean$date, na.rm = TRUE), units = "days"),
+  Missing = sum(is.na(df2_clean$date)),
+  Total = length(df2_clean$date)
+)
+summary_date
+```
+
+```{r}
+df$datetime <- as.POSIXct(paste(df$date, df$time), format = "%Y-%m-%d %H:%M:%S")
+```
+
+```{r}
+df2_clean$datetime <- as.POSIXct(paste(df2_clean$date, df2_clean$time), format = "%Y-%m-%d %H:%M:%S")
+
+```
+
+
+```{r}
+summary_date2 <- tibble::tibble(
+  Min = min(df$datetime, na.rm = TRUE),
+  Max = max(df$datetime, na.rm = TRUE),
+  Range = difftime(max(df$datetime, na.rm = TRUE), min(df$datetime, na.rm = TRUE), units = "days"),
+  Missing = sum(is.na(df$datetime)),
+  Total = length(df$datetime)
+)
+summary_date2
+```
+
+```{r}
+summary_date2 <- tibble::tibble(
+  Min = min(df2_clean$datetime, na.rm = TRUE),
+  Max = max(df2_clean$datetime, na.rm = TRUE),
+  Range = difftime(max(df2_clean$datetime, na.rm = TRUE), min(df2_clean$datetime, na.rm = TRUE), units = "days"),
+  Missing = sum(is.na(df2_clean$datetime)),
+  Total = length(df2_clean$datetime)
+)
+summary_date2
+```
+
+
+
+df <- df %>% mutate(
+    date = as.numeric(date),
+    id = as.factor(as.integer(factor(objectid)))
+)
+
+
+non_unique_id <- df %>% count(id) %>% 
+    filter(n > 1) %>% pull(id)
+
+head(df %>% filter(id %in% non_unique_id))
+
+sum(is.na(df$date))
+
+
+
+```{r fig.height=15, fig.width=20}
+corM <- Hmisc::rcorr(as.matrix(
+    df2_clean %>% dplyr::select_if(~ is.numeric(.))
+))
+
+```
+
+```{r}
+reg_corM <- as.data.frame(corM$r)
+reg_corM <- reg_corM %>% dplyr::select(where(~ !all(is.na(.))))
+
+```
+
+```{r}
+#reg_corM %>% dplyr::select(MBANK) %>% arrange(desc(abs(MBANK)))
+```
+
+
+```{r}
+#rownames(heatmap_data) <- FACandNSFAC_pivot$FAC
+corM <- Hmisc::rcorr(as.matrix(
+    df2_clean %>% dplyr::select_if(is.numeric)
+))
+
+# Extract the correlation values (correlation matrix)
+reg_corM <- as.data.frame(corM$r)
+
+# Step 2: Remove columns and rows with all NA values
+reg_corM <- reg_corM %>%
+  dplyr::select(where(~ !all(is.na(.)))) %>%
+  filter(rowSums(is.na(.)) < ncol(.))
+
+# Step 3: Convert to a numeric matrix and replace NA with 0 (optional)
+data <- as.matrix(reg_corM)
+data[is.na(data)] <- 0  # Replace NA with 0 if needed
+
+# Step 4: Create a heatmap using pheatmap
+pheatmap(data,
+         main = "Heatmap of Correlation Matrix",
+         display_numbers = TRUE,  # Show correlation values
+         clustering_distance_rows = "euclidean",  # Distance metric for clustering
+         clustering_distance_cols = "euclidean",
+         clustering_method = "complete",  # Hierarchical clustering method
+         color = colorRampPalette(c("cyan", "white", "orange"))(50))  # Customize color palette
+
+
+```
+
+```{r}
+cor_values <- as.data.frame(corM$r)   
+p_values <- as.data.frame(corM$P) 
+
+
+```
+
+```{r}
+p_values
+```
+
+```{r}
+searched <- df2_clean %>% filter(search_conducted == "TRUE")
+```
+
+```{r}
+ggplot(searched, aes(x = subject_race)) +
+  geom_bar(fill = "steelblue") +
+  labs(title = "Searches by Race",
+       x = "Race",
+       y = "Number of Searches") +
+  theme_minimal()
+```
+
+```{r, fig.height=4, fig.width=10}
+
+sbjct_race_search <- df2_clean %>%
+      count(subject_race, search_conducted) %>%
+      ggplot(aes(x = as.factor(search_conducted), y = n, fill = subject_race)) +
+      geom_bar(stat = "identity", position = "fill") +
+      labs(fill = "Race", x = "Search Conducted", y = "Proportion", title = "Subject Race & Searches") +
+      scale_fill_brewer(palette = "Set2") +
+      theme_minimal()
+
+officer_race_search <- df2_clean %>%
+      count(officer_race, search_conducted) %>%
+      ggplot(aes(x = as.factor(search_conducted), y = n, fill = officer_race)) +
+      geom_bar(stat = "identity", position = "fill") +
+      labs(fill = "Race", x = "Search Conducted", y = "Proportion", title = "Officer Race & Searches") +
+      scale_fill_brewer(palette = "Set1") +
+      theme_minimal()
+
+ggarrange(sbjct_race_search, officer_race_search, ncol = 2)
+```
+
+
+
+```{r, fig.height=4, fig.width=10}
+sex_subject_search <- df2_clean %>%
+      count(subject_sex, search_conducted) %>%
+      ggplot(aes(x = as.factor(search_conducted), y = n, fill = subject_sex)) +
+      geom_bar(stat = "identity", position = "fill") +
+      labs(fill = "Gender", x = "Search Conducted", y = "Proportion", title = "Subject Sex & Searches") +
+      scale_fill_brewer(palette = "Set2") +
+      theme_minimal()
+
+
+sex_officer_search <- df2_clean %>%
+      count(officer_sex, search_conducted) %>%
+      ggplot(aes(x = as.factor(search_conducted), y = n, fill = officer_sex)) +
+      geom_bar(stat = "identity", position = "fill") +
+      labs(fill = "Gender", x = "Search Conducted", y = "Proportion", title = "Officer Sex & Searches") +
+      scale_fill_brewer(palette = "Set3") +
+      theme_minimal()
+
+ggarrange(sex_subject_search, sex_officer_search, ncol = 2)
+
+```
+
+```{r}
+
+```
+
+```{r}
+df2_clean %>%
+  filter(search_conducted == 1) %>%
+  mutate(age_group = cut(subject_age, breaks = seq(0, 100, by = 10), right = FALSE)) %>%
+  count(age_group) %>%
+  ggplot(aes(x = age_group, y = n)) +
+  geom_col(fill = "steelblue") +
+  labs(title = "Number of Searches by Age Group",
+       x = "Age Group",
+       y = "Number of Searches") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r, fig.height=4, fig.width=10}
+sbjct_age_search <- df2_clean %>%
+      filter(search_conducted == 1) %>%
+      count(subject_age) %>%
+      ggplot(aes(x = subject_age, y = n)) +
+      geom_line(color = "steelblue", size = 1) +
+      labs(title = "Number of Searches by Subject Age",
+           x = "Age (Subject)",
+           y = "Number of Searches") +
+      theme_minimal()
+
+officer_age_search <- df2_clean %>%
+      filter(search_conducted == 1) %>%
+      count(officer_age) %>%
+      ggplot(aes(x = officer_age, y = n)) +
+      geom_line(color = "darkred", size = 1) +
+      labs(title = "Number of Searches by Officer Age",
+           x = "Age (Officer)",
+           y = "Number of Searches") +
+      theme_minimal()
+
+ggarrange(sbjct_age_search, officer_age_search, ncol = 2)
+```
+
+```{r}
+df2_clean %>%
+      filter(search_conducted == 1) %>%
+      count(officer_years_of_service) %>%
+      ggplot(aes(x = officer_years_of_service, y = n)) +
+      geom_line(color = "darkgreen", size = 1) +
+      labs(title = "Number of Searches based on Officer's years of service",
+           x = "Officer Years of Service",
+           y = "Number of Searches") +
+      theme_minimal()
+```
+```{r}
+n_distinct(df2_clean$officer_years_of_service)
+```
+
+
+
+```{r, fig.width=10, fig.height=5}
+# gg_smartwatch_onbanking_weighted <- ggplot(ds_smwtch_cln, aes(x = CNSMR_TYPE, y = scaled_wtpg, fill = as.factor(MBANK))) +
+#     geom_bar(stat = "identity", position = "stack") +
+#   labs(fill = "M-Bank", x = "User Type", y = "Weighted Proportion") + 
+#   fill_palette("Pastel") 
+# 
+# gg_smartwatch_onbanking_Notweighted <- ggplot(ds_smwtch_cln, aes(x = CNSMR_TYPE, fill = as.factor(MBANK))) +
+#   geom_bar(position = "fill") +
+#   labs(fill = "M-Bank", x = "User Type", y = "Proportion") + 
+#   fill_palette("Pastel") 
+# 
+#     
+# ggarrange(gg_smartwatch_onbanking_weighted, gg_smartwatch_onbanking_Notweighted, ncol = 2)
+```
+
+
+
+corM <- Hmisc::rcorr(as.matrix(
+    ds_smphn_cln %>% dplyr::select_if(is.numeric)
+))
+
+# Extract the correlation values (correlation matrix)
+ 
+
+result_good <- cor_values %>% dplyr::select(where(~ !all(is.na(.)))) %>%
+  filter(rowSums(is.na(.)) < ncol(.)) %>% 
+  dplyr::select(MBANK) %>%  
+  mutate(variable = rownames(cor_values),  # Add variable names for easier reference
+         p_value = p_values$MBANK) %>%   # Add p-values for ONBANK
+  filter(abs(MBANK) > 0.1) %>%           # Filter correlations > threshold
+  arrange(desc(abs(MBANK)))              # Sort by absolute correlation values
+
+result_bad <- cor_values %>% dplyr::select(where(~ !all(is.na(.)))) %>%
+  filter(rowSums(is.na(.)) < ncol(.)) %>% 
+  dplyr::select(MBANK) %>%  
+  mutate(variable = rownames(cor_values),  # Add variable names for easier reference
+         p_value = p_values$MBANK) %>%   # Add p-values for ONBANK
+  filter(abs(MBANK) < 0.05) %>%           # Filter correlations > threshold
+  arrange(desc(abs(MBANK)))
+
+
+
+
+
+### TEST - Chi-Squared
+
+```{r}
+ctab <- table(df2_clean$subject_race, df2_clean$search_conducted)
+ctab
+```
+```{r}
+ctab <- ctab[rowSums(ctab) > 0, colSums(ctab) > 0]
+
+chisq.test(ctab)
+```
+
+
+ctab <- table(df3$, df3$)
+ctab
+
+
+
+
+
+
+
+
+
+
+
+
+
+
