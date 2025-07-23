@@ -1,0 +1,423 @@
+---
+title: "la_analysis_trends"
+author: "Xinlei Xu"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+```{r include=FALSE}
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(forecast)
+library(ggplot2)
+library(changepoint)
+library(strucchange)
+library(lubridate)
+```
+
+```{r}
+la <- readRDS("los_angeles.rds")
+```
+
+Overview of dataset
+```{r}
+glimpse(la)
+```
+filter out missing values on date
+```{r}
+la %>% count(!is.na(date))
+la <- la %>% 
+  mutate(date = as.Date(date)) %>% 
+  filter(!is.na(date))
+```
+
+
+# Total Stops as time series (in days)
+```{r}
+daily_total <- la %>%
+  count(date, name = "n_stops") %>%
+  arrange(date)
+```
+
+```{r}
+start_year <- as.numeric(format(min(daily_total$date), "%Y"))
+start_day  <- as.numeric(format(min(daily_total$date), "%j"))
+total_ts <- ts(
+  data      = daily_total$n_stops,
+  start     = c(start_year, start_day),
+  frequency = 365
+)
+# ts plot
+plot(total_ts, main = "Daily Total Stops (ts)")
+```
+
+```{r}
+# 3. ACF / PACF to check lag‐relationships
+#    (you’ll often see a daily‐seasonal spike at lag=365)
+Acf(total_ts, main="ACF of Daily Stops")
+Pacf(total_ts, main="PACF of Daily Stops")
+```
+
+## Fit ARIMA directly
+```{r}
+# Fit a seasonal ARIMA model
+#    auto.arima will search for (p,d,q)×(P,D,Q)[365]
+fit_arima <- auto.arima(
+  total_ts,
+  seasonal    = TRUE,
+  stepwise    = FALSE,   # slower but more thorough
+  approximation = FALSE   # more accurate search
+)
+
+summary(fit_arima)
+checkresiduals(fit_arima)
+```
+
+## STL decomp then ARIMA
+```{r}
+fit_stl <- stlm(total_ts, s.window="periodic", method="arima")
+summary(fit_stl)
+```
+```{r}
+fit_stl$model
+```
+STL decomposition first (extract trend + seasonal), then fit an ARIMA. The fitted ARIMA(5,1,1) is
+$$\Delta r_t=\phi_1\Delta r_{t-1}+...+\phi_5\Delta r_{t-5}+\theta_1\varepsilon_{t-1}+\varepsilon_t$$
+AIC = 43 898.7	from different fitting an ARIMA model (AIC = 44 435.2), so a better fit to the model.
+
+
+```{r}
+comp <- fit_stl$stl[, c("Trend", "Seasonal365", "Remainder", "Data")]
+
+orig_ts <- fit_stl$x 
+start_info <- start(orig_ts)
+first_date <- as.Date(paste0(start_info[1], "-01-01")) + 
+  (start_info[2] - 1)
+dates <- seq(from = first_date, by = "day", 
+             length.out = length(orig_ts))
+
+df <- data.frame(
+  date      = dates,
+  trend     = as.numeric(comp[, "Trend"]),
+  seasonal  = as.numeric(comp[, "Seasonal365"]),
+  remainder = as.numeric(comp[, "Remainder"]),
+  data = as.numeric(orig_ts)
+)
+
+# Pivot to long form
+df_long <- pivot_longer(df, -date, 
+                        names_to = "component", 
+                        values_to = "value")
+
+ggplot(df_long, aes(x = date, y = value, color = component)) +
+  geom_line(alpha = 0.4, size = 0.8) +
+  labs(
+    title = "STL Components",
+    x     = "Date",
+    y     = "",
+    color = "") +
+  theme_minimal()
+
+```
+
+### Annual Seasonal componet
+```{r}
+# Extract seasonal ts
+seasonal_ts <- as.numeric(comp[, "Seasonal365"])
+
+# Build a data frame with a day-of-year index
+df_seas <- tibble(
+  date      = dates,
+  doy       = as.integer(format(dates, "%j")),  # 1–365
+  seasonal  = as.numeric(seasonal_ts)
+)
+
+# Average across years for each day-of-year
+avg_seas <- df_seas %>%
+  group_by(doy) %>%
+  summarize(mean_seas = mean(seasonal)) 
+
+ref_year <- 2010
+
+# Add a dummy Date column for plotting
+avg_seas <- avg_seas %>%
+  mutate(
+    # doy 1 → Jan 1, doy 32 → Feb 1, etc.
+    date = as.Date(doy - 1, origin = paste0(ref_year, "-01-01"))
+  )
+
+# Plot with month labels on the x-axis
+ggplot(avg_seas, aes(x = date, y = mean_seas)) +
+  geom_line() +
+  scale_x_date(
+    date_breaks = "1 month",           # one tick per month
+    date_labels = "%b"                
+  ) +
+  labs(
+    title = "Typical Annual Pattern of Daily Stops",
+    x     = NULL,
+    y     = "Average Seasonal Effect"
+  ) +
+  theme_minimal()
+
+```
+Late winter lull (Jan–Feb)
+After the holiday rush, stops tend to dip slightly in January—people are off vacation, enforcement is lighter, and traffic volumes are lower.
+
+Spring buildup (Mar–May)
+Through March and into May you see a gradual rise—“pre-summer” enforcement ramps up around college spring break, Easter holiday travel, and early-season DUI checkpoints.
+
+Summer peak (Jun–Aug)
+The biggest positive excursions (often +300 to +500 stops) occur in mid-summer. Warm weather means more traffic, more special events, and heavy speed-and-DUI patrols around Independence Day and large outdoor festivals.
+
+Autumn taper (Sep–Oct)
+After Labor Day and back-to-school, there’s a gentle fall-off. Enforcement shifts back to non‐summer priorities; traffic volumes settle.
+
+Pre-holiday plateau (Nov)
+You often see a small bump in November—think Thanksgiving travel weekends and extra freeway patrols before the winter holidays.
+
+Year-end drop (Dec)
+December shows the deepest troughs (−800 to −1 000 stops): holiday shutdowns, rainier weather, and many departments focus on crashes or special operations instead of routine stops.
+
+
+### Weekly seasonality
+```{r}
+ts_weekly <- ts(daily_total$n_stops, 
+                frequency = 7, 
+                start = first_date)
+fit_weekly <- stl(ts_weekly, s.window = "periodic")
+
+# Suppose seasonal_ts is your weekly seasonal component:
+seasonal_ts <- fit_weekly$time.series[, "seasonal"]
+
+# Use your original daily_total$date instead of trying to rebuild from ts:
+df_wk <- tibble(
+  date     = daily_total$date,
+  seasonal = as.numeric(seasonal_ts)
+)
+
+# Add a weekday factor
+df_wk <- df_wk %>%
+  mutate(wday = wday(date, label = TRUE, 
+                     abbr = FALSE, week_start = 1))
+
+# Summarize the typical effect by weekday
+weekly_summary <- df_wk %>%
+  group_by(wday) %>%
+  summarize(
+    mean_seasonal = mean(seasonal, na.rm = TRUE),
+    p10  = quantile(seasonal, 0.10, na.rm = TRUE),
+    p90  = quantile(seasonal, 0.90, na.rm = TRUE)
+  )
+
+# 5. Plot
+ggplot(weekly_summary, aes(x = wday, y = mean_seasonal)) +
+  geom_col(fill = "steelblue", alpha = 0.7) +
+  geom_errorbar(aes(ymin = p10, ymax = p90), width = 0.2) +
+  labs(
+    title = "Typical Weekly Seasonal Effect on Stops",
+    x     = "Day of Week",
+    y     = "Average deviation from trend"
+  ) +
+  theme_minimal()
+```
+
+| **Monday**    |     –200 stops | After the weekend lull, Monday sees fewer stops than “typical” (i.e. below the long-run trend). It often takes a day or two for enforcement to ramp up. |
+| **Tuesday**   |     + 80 stops | Tuesday is the first “full” workday and enforcement picks up—slightly above trend.                                                                      |
+| **Wednesday** |    + 300 stops | Midweek peak. Higher commuter traffic and steady staffing levels make for the heaviest enforcement day.                                                 |
+| **Thursday**  |    + 320 stops | Very similar to Wednesday—still in peak‐enforcement mode before the weekend slowdown.                                                                   |
+| **Friday**    |    + 100 stops | Enforcement eases off somewhat as officers shift into weekend patrol patterns, but is still above trend.                                                |
+| **Saturday**  |    – 170 stops | Weekend leisure traffic, but historically lower stop‐reporting (fewer checkpoints, more community events).                                              |
+| **Sunday**    |    – 420 stops | Lowest of the week: minimal commuter traffic plus reduced late-night enforcement compared to weekdays.                                                  |
+
+Commuter vs. leisure traffic
+
+Wed/Thu peaks coincide with the heaviest weekday rush and routine traffic policing (DUI checkpoints, speed enforcement).
+
+Weekends see more varied trips (shopping, recreation) and often fewer formal stops or different priorities (crowd control, event security).
+
+Officer shift schedules
+
+Many departments staff more officers on midweek “peak” shifts and fewer on weekend day-shifts (or put more officers on late-night weekend patrols, which doesn’t show up in daytime stop counts).
+
+Agency policies
+
+Some agencies throttle back non-critical traffic enforcement on weekends to focus on collisions or special events.
+
+Reporting artifacts
+
+Data‐entry lags or batching can depress Monday counts if weekend records get recorded on Tuesday, etc.
+
+```{r}
+# 1. Extract components
+comp_wk   <- fit_weekly$time.series
+seasonal  <- comp_wk[, "seasonal"]
+trend     <- comp_wk[, "trend"]
+remainder <- comp_wk[, "remainder"]
+
+# 2. Check reconstruction
+#    season + trend + remainder should recover the original series
+recon <- seasonal + trend + remainder
+stopifnot(all.equal(as.numeric(recon), as.numeric(ts_weekly), tolerance = 1e-6))
+
+# 3. Plot remainder – should look like noise
+autoplot(ts(remainder, frequency = 7, start = start(ts_weekly))) +
+  ggtitle("Remainder from Weekly STL Decomposition")
+
+# 4. ACF / PACF of the remainder
+Acf(remainder, main="ACF of STL Remainder")    # no strong spikes
+Pacf(remainder, main="PACF of STL Remainder")
+
+# 5. Ljung–Box test for no autocorrelation
+Box.test(remainder, lag = 14, type = "Ljung-Box", fitdf = 0)
+```
+
+
+
+### forecast
+
+```{r}
+fc_stl <- forecast(fit_stl, h = 30)
+autoplot(fc_stl) + ggtitle("30-day Forecast: STL-ARIMA")
+```
+
+
+## Break point in trends
+```{r}
+# Get your trend component as a numeric ts
+trend_ts  <- ts(as.numeric(comp[, "Trend"]),
+                start = start(total_ts),
+                frequency = frequency(total_ts))
+
+# Build a time index
+time_idx  <- seq_along(trend_ts)
+
+# Fit breakpoints for a linear model trend ~ time
+#    'h' is the minimum segment size (fraction of data)
+bp_lin <- breakpoints(trend_ts ~ time_idx, h = 0.1)
+
+# See how many breaks; here the function will choose the optimal number by BIC
+#summary(bp_lin)
+
+# Extract breakpoint locations (as positions in the series)
+bp_pos <- bp_lin$breakpoints
+
+# Convert to dates
+break_dates <- dates[bp_pos]
+
+break_dates1 <- as.Date(c("2011-04-20","2014-04-03","2015-03-31","2017-08-18"))
+
+# Plot with vertical lines
+plot(dates, trend_ts, type = "l", xlab = "Date", ylab = "Trend")
+abline(v = break_dates1, col = "red", lty = 2)
+```
+
+**2011-04-20** 
+- Around early 2011 LAPD rolled out new data‐collection procedures for traffic stops (better logging → more recorded stops)
+- Broad “zero tolerance” push under then–Chief Charlie Beck stepping up enforcement.     
+- LAPD Annual Report 2010–11
+- City Council minutes from Q1 2011       
+
+**2014-04-03**
+- On April 3, 2014 the LA Police Commission adopted new guidelines restricting “pretextual” stops (minor equipment/registration violations) after the Times exposé.     
+- LAPD policy bulletin APC 14-002
+- LA Times “Minor stops plummet after LAPD policy change” (Nov 2022 retrospective)
+
+**2015-03-31** 
+- March 31, 2015 marks the **official launch** of the LADOT “Citation in Lieu of Stop” pilot (warnings & citations instead of full stops, to reduce collisions).    
+- LADOT press release Q1 2015
+- City Council file 14-1460                                                                                     
+**2017-08-18** 
+- Mid-2017 saw the **full rollout** of LAPD body-worn cameras (Jan–Aug 2017 pilot → department-wide service on Aug 18).  The expectation of video accountability spurred more cautious but more thorough stop reporting. 
+- LAPD press release 8/18/2017
+- Civilian Oversight Commission minutes                               
+
+https://www.latimes.com/california/story/2022-11-14/minor-traffic-stops-plummet-in-months-after-lapd-policy-change?utm_source=chatgpt.com "Minor police stops plummet after LAPD policy change"
+
+
+# Proportional of non-white stop
+```{r}
+la %>% count(subject_race)
+la %>% count(!is.na(subject_race))
+```
+
+```{r}
+nonwhite_levels <- levels(la$subject_race)[levels(la$subject_race) != "white" ]
+
+daily_nw <- la %>%
+  # make sure date is Date
+  mutate(date = as.Date(date)) %>%
+  filter(!is.na(date)) %>%
+  # count by race/day
+  count(date, subject_race) %>%
+  # widen so each race is its own column
+  pivot_wider(
+    names_from   = subject_race,
+    values_from  = n,
+    values_fill  = 0
+  ) %>%
+  # now compute totals and nonwhite counts using any_of()
+  mutate(
+    total          = rowSums(across(-date)),
+    nonwhite       = rowSums(across(any_of(nonwhite_levels))),
+    prop_nonwhite  = nonwhite / total
+  ) %>%
+  arrange(date) %>%
+  select(date, total, nonwhite, prop_nonwhite)
+
+# inspect
+head(daily_nw)
+```
+
+```{r}
+nw_ts <- ts(
+  data      = daily_nw$prop_nonwhite,
+  start     = c(start_year, start_day),
+  frequency = 365    # daily seasonality
+)
+plot(nw_ts, 
+     ylab = "Prop. non-white stops", 
+     main = "Daily proportion non-white") 
+
+```
+
+# Proportion of male stop
+```{r}
+la %>% count(subject_sex)
+la %>% count(!is.na(subject_sex))
+```
+```{r}
+daily_male <- la %>%
+  # make sure date is Date
+  mutate(date = as.Date(date)) %>%
+  filter(!is.na(date)) %>%
+  # count by race/day
+  count(date, subject_sex) %>%
+  # widen so each race is its own column
+  pivot_wider(
+    names_from   = subject_sex,
+    values_from  = n,
+    values_fill  = 0
+  ) %>%
+  mutate(
+    total     = female+male,
+    prop_male  = male / total
+  ) %>%
+  arrange(date) %>%
+  select(date, total, male, prop_male)
+
+# inspect
+head(daily_male)
+```
+
+```{r}
+male_ts <- ts(
+  data      = daily_male$prop_male,
+  start     = c(start_year, start_day),
+  frequency = 365    # daily seasonality
+)
+plot(male_ts, 
+     ylab = "Prop. male stops", 
+     main = "Daily proportion male") 
+```
+
