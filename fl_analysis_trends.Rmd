@@ -1,0 +1,478 @@
+---
+title: "fl_analysis_trends"
+author: "Xinlei Xu"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+
+```{r include=FALSE}
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(forecast)
+library(ggplot2)
+library(changepoint)
+library(strucchange)
+library(lubridate)
+library(purrr)
+library(stringr)
+```
+
+```{r}
+fl <- readRDS("fl_statewide.rds")
+```
+
+```{r}
+glimpse(fl)
+```
+```{r}
+fl %>% count(!is.na(date))
+fl <- fl %>% 
+  mutate(date = as.Date(date)) %>% 
+  filter(!is.na(date))
+```
+```{r}
+fl %>% count(type)
+```
+
+
+
+
+# Daily stops as time series
+```{r}
+daily_total <- fl %>%
+  count(date, name = "n_stops") %>%
+  arrange(date)
+
+start_year <- as.numeric(format(min(daily_total$date), "%Y"))
+start_day  <- as.numeric(format(min(daily_total$date), "%j"))
+total_ts <- ts(
+  data      = daily_total$n_stops,
+  start     = c(start_year, start_day),
+  frequency = 365
+)
+first_date <- min(daily_total$date)
+```
+
+```{r}
+df_daily <- tibble(
+  date  = seq(from = first_date,
+              by   = "1 day",
+              length.out = length(total_ts)),
+  stops = as.numeric(total_ts)
+)
+
+ggplot(df_daily, aes(x = date, y = stops)) +
+  geom_line(color = "chocolate", alpha = 0.8, linewidth = 0.5) +
+  labs(title = NULL,x = "Date",y = "Number of Traffic Stops") +
+  theme_minimal()
+```
+
+## Fit ARIMA directly
+```{r}
+# Fit a seasonal ARIMA model
+#    auto.arima will search for (p,d,q)×(P,D,Q)[365]
+fit_arima <- auto.arima(
+  total_ts,
+  seasonal    = TRUE,
+  stepwise    = FALSE,   # slower but more thorough
+  approximation = FALSE   # more accurate search
+)
+
+summary(fit_arima)
+checkresiduals(fit_arima)
+```
+
+## SLT Decomposition then ARIMA
+```{r}
+fit_stl <- stlm(total_ts, s.window="periodic", method="arima")
+fit_stl$model
+```
+
+```{r}
+comp <- fit_stl$stl[, c("Trend", "Seasonal365", "Remainder", "Data")]
+
+orig_ts <- fit_stl$x 
+start_info <- start(orig_ts)
+first_date <- as.Date(paste0(start_info[1], "-01-01")) + 
+  (start_info[2] - 1)
+dates <- seq(from = first_date, by = "day", 
+             length.out = length(orig_ts))
+```
+
+
+```{r}
+fit_smooth <- stl(total_ts,
+                  s.window = "periodic",
+                  t.window = 201,
+                  robust = TRUE)
+
+
+comp <- fit_smooth$time.series[, c("trend", "seasonal", "remainder")]
+
+df <- data.frame(
+  date      = dates,
+  Trend     = as.numeric(comp[, "trend"]),
+  Seasonal  = as.numeric(comp[, "seasonal"]),
+  Remainder = as.numeric(comp[, "remainder"]),
+  Data = as.numeric(orig_ts)
+)
+
+df_long <- df %>%
+  pivot_longer(-date, names_to = "component", 
+               values_to = "value") %>%
+  mutate(component = recode(component,
+                            Data = "Daily Stops")) %>%
+  mutate(component = factor(component,
+                            levels = c("Daily Stops", "Trend",
+                                       "Seasonal", "Remainder")))
+
+ggplot(df_long, aes(x = date, y = value, color = component)) +
+  geom_line(alpha = 0.5, linewidth = 0.8) +
+  labs(title = "", x = "",
+       y = "", color = "") +
+  theme_minimal()+theme(
+        legend.text = element_text(size = 12),      
+        legend.key.size = unit(1.2, "cm")) + 
+  scale_color_manual(
+    values = c(
+      "Trend" = "black",
+      "Seasonal" = "blue2",
+      "Remainder" = "grey60",
+      "Daily Stops" = "coral"
+    )
+  ) + 
+  labs(title = NULL,x = "Date",y = "Number of Traffic Stops")
+
+```
+
+### fir arima with the remainder
+```{r}
+# Extract remainder (detrended & deseasonalized series)
+remainder_ts <- fit_smooth$time.series[, "remainder"]
+
+# Fit ARIMA automatically
+fit_arima <- auto.arima(remainder_ts)
+
+# Summary of the model
+summary(fit_arima)
+
+# Forecast example
+forecast(fit_arima, h = 30) %>% autoplot()
+
+```
+
+
+
+
+### Break point in trends
+```{r}
+# Get your trend component as a numeric ts
+trend_ts  <- ts(as.numeric(comp[, "trend"]),
+                start = start(total_ts),
+                frequency = frequency(total_ts))
+
+# Build a time index
+time_idx  <- seq_along(trend_ts)
+
+# Fit breakpoints for a linear model trend ~ time
+#    'h' is the minimum segment size (fraction of data)
+bp_lin <- breakpoints(trend_ts ~ time_idx, h = 0.15)
+
+# See how many breaks; here the function will choose the optimal number by BIC
+#summary(bp_lin)
+
+# Extract breakpoint locations (as positions in the series)
+bp_pos <- bp_lin$breakpoints
+
+# Convert to dates
+break_dates <- as.Date(dates[bp_pos])
+
+break_dates <- break_dates[-3]
+
+df_breaks <- df_trend %>% 
+  filter(date %in% break_dates)
+
+df_trend <- tibble(
+  date  = dates,              
+  trend = as.numeric(trend_ts))
+
+ggplot(df_trend, aes(x = date, y = trend)) +
+  geom_line(linewidth = 1, color = "coral3", alpha=0.7) +
+  geom_vline(xintercept = break_dates,
+             linetype   = "dashed",
+             color      = "cornflowerblue") +
+  geom_point(data = df_breaks,
+             aes(x = date, y = trend),
+             color = "grey30",
+             size  = 2) +
+  geom_text(data = df_breaks,
+            aes(x = date, y = trend, 
+                label = format(date, "%Y-%m-%d")),
+            vjust = 2,        
+            size  = 2) +
+  labs(x = NULL, y = NULL,title = NULL) +
+  theme_minimal()
+```
+
+
+### Annual seasonal component
+```{r}
+# Extract seasonal ts
+seasonal_ts <- as.numeric(comp[, "seasonal"])
+
+# Build a data frame with a day-of-year index
+df_seas <- tibble(
+  date      = dates,
+  doy       = as.integer(format(dates, "%j")),  # 1–365
+  seasonal  = as.numeric(seasonal_ts)
+)
+
+# Average across years for each day-of-year
+avg_seas <- df_seas %>%
+  group_by(doy) %>%
+  summarize(mean_seas = mean(seasonal)) 
+
+ref_year = 2010
+
+# Add a dummy Date column for plotting
+avg_seas <- avg_seas %>%
+  mutate(
+    # doy 1 → Jan 1, doy 32 → Feb 1, etc.
+    date = as.Date(doy - 1, origin = paste0(ref_year, "-01-01"))
+  )
+
+# Plot with month labels on the x-axis
+ggplot(avg_seas, aes(x = date, y = mean_seas)) +
+  geom_line(color = "coral3") +
+  scale_x_date(
+    date_breaks = "1 month",           # one tick per month
+    date_labels = "%b"                
+  ) +
+  labs( title = "", x = NULL, y = ""
+  ) +
+  theme_minimal() +
+  labs(title = NULL,x = "Date",y = "Annual Seasonal Effect")
+
+```
+
+### Weekly seasonality
+```{r}
+ts_weekly <- ts(daily_total$n_stops, 
+                frequency = 7, 
+                start = first_date)
+fit_weekly <- stl(ts_weekly, s.window = "periodic")
+
+# Suppose seasonal_ts is your weekly seasonal component:
+seasonal_ts <- fit_weekly$time.series[, "seasonal"]
+
+# Use your original daily_total$date instead of trying to rebuild from ts:
+df_wk <- tibble(
+  date     = daily_total$date,
+  seasonal = as.numeric(seasonal_ts)
+)
+
+# Add a weekday factor
+df_wk <- df_wk %>%
+  mutate(wday = wday(date, label = TRUE, 
+                     abbr = FALSE, week_start = 1))
+
+weekly_pattern <- df_wk %>%
+  group_by(wday) %>%
+  summarise(avg_seasonal = mean(seasonal, na.rm = TRUE))
+
+# Plot
+ggplot(weekly_pattern, aes(x = wday, y = avg_seasonal)) +
+  geom_line(aes(group = 1), color = "coral3", size = 1) + 
+  geom_point() +
+  labs(title = "",
+       x = "",
+       y = "") +
+  theme_minimal()+
+     labs(title = NULL,x = "",y = "Weekly Seasonal Effect")
+```
+
+```{r}
+# Summarize the typical effect by weekday
+weekly_summary <- df_wk %>%
+  group_by(wday) %>%
+  summarize(
+    mean_seasonal = mean(seasonal, na.rm = TRUE),
+    p10  = quantile(seasonal, 0.10, na.rm = TRUE),
+    p90  = quantile(seasonal, 0.90, na.rm = TRUE)
+  )
+
+# 5. Plot
+ggplot(weekly_summary, aes(x = wday, y = mean_seasonal)) +
+  geom_col(fill = "steelblue", alpha = 0.7) +
+  geom_errorbar(aes(ymin = p10, ymax = p90), width = 0.2) +
+  labs(
+    title = "Typical Weekly Seasonal Effect on Stops",
+    x     = "Day of Week",
+    y     = "Average deviation from trend"
+  ) +
+  theme_minimal()
+```
+
+
+## Trend by county name
+
+```{r}
+county_counts <- fl %>%
+  count(county_name) %>%
+  arrange(desc(n))
+
+print(county_counts)
+big_counties <- county_counts %>%
+  filter(n > 260000)
+```
+
+
+```{r}
+top_counties <- big_counties$county_name
+
+decompose_county <- function(county) {
+  county_df <- fl %>%
+    filter(county_name == county) %>%
+    count(date, name = "n_stops") %>%
+    complete(date = seq.Date(min(fl$date), max(fl$date), by = "day"), 
+             fill = list(n_stops = 0)) %>%
+    arrange(date)
+
+  start_year <- as.numeric(format(min(county_df$date), "%Y"))
+  start_day  <- as.numeric(format(min(county_df$date), "%j"))
+
+  county_ts <- ts(county_df$n_stops, 
+                  start = c(start_year, start_day), 
+                  frequency = 365)
+
+  # STL decomposition
+  stl_decomp <- stl(county_ts,
+                  s.window = "periodic",
+                  t.window = 201,
+                  robust = TRUE)
+  
+  # Prepare for plotting
+  data.frame(
+    date = county_df$date,
+    Trend = as.numeric(stl_decomp$time.series[, "trend"]),
+    Seasonal = as.numeric(stl_decomp$time.series[, "seasonal"]),
+    Remainder = as.numeric(stl_decomp$time.series[, "remainder"]),
+    County = county
+  )
+}
+```
+
+```{r}
+decomp_list <- map(top_counties, decompose_county)
+decomp_df <- bind_rows(decomp_list)
+```
+
+```{r}
+ggplot(decomp_df, aes(x = date, y = Trend, color = County)) +
+  geom_line() +
+  labs(title = "", y = "Number of Traffic Stops", x="", color="") +
+  theme_minimal()
+
+```
+
+# Proportion of male stop
+```{r}
+fl %>% count(subject_sex)
+fl %>% count(!is.na(subject_sex))
+```
+
+```{r}
+daily_male <- fl %>%
+  # make sure date is Date
+  mutate(date = as.Date(date)) %>%
+  filter(!is.na(date)) %>%
+  # count by race/day
+  count(date, subject_sex) %>%
+  # widen so each race is its own column
+  pivot_wider(
+    names_from   = subject_sex,
+    values_from  = n,
+    values_fill  = 0
+  ) %>%
+  mutate(
+    total     = female+male,
+    prop_male  = male / total
+  ) %>%
+  arrange(date) %>%
+  select(date, total, male, prop_male)
+
+# inspect
+#head(daily_male)
+```
+
+```{r}
+male_ts <- ts(
+  data      = daily_male$prop_male,
+  start     = c(start_year, start_day),
+  frequency = 365    # daily seasonality
+)
+plot(male_ts, 
+     ylab = "Prop. male stops", 
+     main = "Daily proportion male") 
+```
+
+
+# Proportion of non-white stops
+```{r}
+fl %>% count(subject_race)
+fl %>% count(!is.na(subject_race))
+```
+
+
+```{r}
+nonwhite_levels <- levels(fl$subject_race)[levels(fl$subject_race) != "white" ]
+# remove "unknown"
+nonwhite_levels <- nonwhite_levels[-5]
+daily_nw <- fl %>%
+  # make sure date is Date
+  mutate(date = as.Date(date)) %>%
+  filter(!is.na(date)) %>%
+  # count by race/day
+  count(date, subject_race) %>%
+  # widen so each race is its own column
+  pivot_wider(
+    names_from   = subject_race,
+    values_from  = n,
+    values_fill  = 0
+  ) %>%
+  # now compute totals and nonwhite counts using any_of()
+  mutate(
+    total          = rowSums(across(-date)),
+    nonwhite       = rowSums(across(any_of(nonwhite_levels))),
+    prop_nonwhite  = nonwhite / total
+  ) %>%
+  arrange(date) %>%
+  select(date, total, nonwhite, prop_nonwhite)
+
+# inspect
+#head(daily_nw)
+```
+
+
+```{r}
+nw_ts <- ts(
+  data      = daily_nw$prop_nonwhite,
+  start     = c(start_year, start_day),
+  frequency = 365    # daily seasonality
+)
+plot(nw_ts, 
+     ylab = "Prop. non-white stops", 
+     main = "Daily proportion non-white") 
+
+```
+
+
+
+
+
+
+
+
+
